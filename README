@@ -1,0 +1,24 @@
+
+the code is advanced enough for a
+little preview. it requires python2.7, scipy and mathplotlib. installing
+prerequisites shuld be straight forward using pip or easyinstall.
+
+to start the example, run
+
+$ python simulator.py example
+
+to stop it, you will have to fire ctrl-c in the terminal two or more
+times. here's a quick explanation of the files:
+
+simulator.py -- mainly does initialization and graphics
+api.py -- contains all the logic
+example.py -- is the configuration file that sets up the system
+(currently the flocking via sensitive docking example that I presented
+in venice).
+
+there are a couple of things missing in the simulator, mainly active
+gradient ascent, material uptake/release, and sensible (neumann)
+boundary conditions, and documentation :-(
+
+Harold - Sept 27 2013
+
