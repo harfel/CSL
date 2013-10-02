@@ -1,10 +1,8 @@
 from api import *
 
-
 class Pheromone(Chemical) :
 	diffusion = 1.
 	decay = 0.01
-
 
 class Flocker(Agent) :
 	states = 'free', 'docked'
@@ -12,11 +10,11 @@ class Flocker(Agent) :
 	clock = .1
 
 	sensors = {
-		'pheromone' : Sensor(Pheromone, threshold=0.5),
+		'pheromone' : Sensor(Pheromone, 0.5),
 	}
 
 	actuators = {
-		'immobilize' : Actuator(active=['docked']),
+		'immobilize' : Actuator('docked'),
 	}
 
 	transitions = {
@@ -26,10 +24,9 @@ class Flocker(Agent) :
 		('docked', '^pheromone') : 'free',
 	}
 	
-	displacement = Agent.when_active('immobilize', 0.1, 1.)
+	displacement = Agent.actuated('immobilize', 0.1, 1.)
 
 	reaction = lambda agent, conc : 0.4
-
 
 class Space(Space) :
 	size_x = 0,100

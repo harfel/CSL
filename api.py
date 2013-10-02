@@ -1,11 +1,51 @@
-from itertools import izip
+"""Chemical Swarm Programming Interface.
+
+Chemical Swarm programs should start with the line
+
+	from api import *
+
+In a chemical swarm program, there has to be exactly one instance of a
+subclass of Space. This subclass has to be either defined in the program
+file, or imported from another module (see the examples package).
+"""
+import abc
 import numpy as np
 from scipy.sparse import spdiags,linalg,eye
 
 
 class Space(object) :
-	chemicals = []
-	swarms = []
+	"""Simulation space base class.
+
+	Subclasses need to implement the attributes size_x, size_y, and
+	resolution. In addition they can (and usually do) implement the
+	attributes chemicals and swarms.
+	"""
+	__metaclass__ = abc.ABCMeta
+
+	@abc.abstractproperty
+	def size_x(self) :
+		"Tuple of real numbers defining left and right boundary coordinates."
+		return None,None
+
+	@abc.abstractproperty
+	def size_y(self) :
+		"Tuple of real numbers defining bottom and top boundary coordinates."
+		return None,None
+
+	@abc.abstractproperty
+	def resolution(self) :
+		"Numerical resolution of the finite difference PDE discretization."
+		return None
+
+	@property
+	def chemicals(self) :
+		"Sequence of api.Chemical types. Defaults to []."
+		return []
+
+	@property
+	def swarms(self) :
+		"Sequence of embedded api.Agent types. Defaults to []."
+		return []
 
 	def __init__(self) :
 		mx = (self.size_x[1]-self.size_x[0])/self.resolution
@@ -21,7 +61,7 @@ class Space(object) :
 
 
 	def init(self) :
-		"""initialize system"""
+		"""Initialize system"""
 		def random_pos() :
 			b = np.array([self.size_x[1], self.size_y[1]])
 			a = np.array([self.size_x[0], self.size_y[0]])
@@ -29,51 +69,13 @@ class Space(object) :
 
 		self.t = 0
 		self.fields = np.array([
-			np.zeros(self._mx*self._my) for _ in self.chemicals
-			# np.random.randn(self._mx*self._my) for _ in self.chemicals
+			c.initial * np.ones(self._mx*self._my) for c in self.chemicals
 		])
-		self.agents = [Agent(random_pos()) for Agent in self.swarms ]
-
-
-	def integrate(self, dt) :
-		"""Advance system time by dt"""
-		
-		# diffusion and decay
-		def diffuse(f,it=iter(self.chemicals)) :
-			c = it.next()
-			return linalg.spsolve(self._II - dt*c.diffusion*self._A,f) - dt*c.decay*f
-		self.fields = np.apply_along_axis(diffuse, -1, self.fields)
-
-		# agent movement
-		for agent in self.agents :
-			# XXX gradient ascent
-			dis = agent.displacement * dt**-0.5 * np.random.uniform(-1,1,2)
-			agent.pos += self._clip(agent.pos, dis)
-		
-		# reaction
-		for agent in self.agents :
-			i = self._pos_to_index(*agent.pos)
-			self.fields[:,i] += dt/self.resolution**2 * agent.reaction(self.fields[:,i]) 
-
-		# XXX agent uptake/release
-
-		for agent in self.agents :
-			# adhere to clock cycle
-			if self.t % agent.clock > agent.clock : continue
-
-			# set agent sensors
-			for sensor in agent.sensors.values() :
-				i = self.chemicals.index(sensor.chemical)
-				c = self.fields[i,self._pos_to_index(*agent.pos)]
-				sensor.value = c >= sensor.threshold
-
-			# agent transitions
-			inp = agent.state, tuple(s.value for s in agent.sensors.values())
-			agent.state = agent.transitions[inp]
-
-
-		self.t += dt
-		return dt
+		d = self.fields.shape[0]
+		self.agents = [
+			Agent(d,Agent.pos) if hasattr(Agent, 'pos') else Agent(d,random_pos())
+			for Agent in self.swarms
+		]
 
 
 	def _clip(self, pos, dis, border=1e-5) :
@@ -108,28 +110,151 @@ class Space(object) :
 		e = np.ones(mx*my)
 		e2 = ([1]*(mx-1)+[0])*my
 		e3 = ([0]+[1]*(mx-1))*my
-		A = spdiags([-4*e,e2,e3,e,e],[0,-1,1,-mx,mx],mx*my,mx*my)
+		bands = [-4*e,e2,e3,e,e]
+		diags = [0,-1,1,-mx,mx]
+		A = spdiags(bands,diags,mx*my,mx*my)
 		A /= self.resolution**2
 		return A
 
+	def _gradient(self, field, (x,y)) :
+		# approximate the gradient at position pos as the mean of the gradient
+		# between the four nearest meshpoints
+		c = self._pos_to_index(x,y)
+		e = c+1
+		w = c-1
+		n = c+self._mx
+		s = c-self._mx
+		if x-self.size_x[0] < self.resolution :
+			dx = 0
+		elif self.size_x[1] - x < self.resolution :
+			dx = 0
+		else :
+			dx = 0.5*(field[e]-field[w])/self.resolution
+		if y-self.size_y[0] < self.resolution :
+			dy = 0
+		elif self.size_y[1] - y < self.resolution :
+			dy = 0
+		else :
+			dy = 0.5*(field[n]-field[s])/self.resolution
+		return np.array([dx,dy])
+
 
 class Chemical(object) :
+	"""Chemical species base class.
+	
+	Subclasses can override the attributes:
+	- Chemical.diffusion (diffusion constant)
+	- Chemical.decay     (decay constant)
+	- Chemical.initial   (initial concentration)
+	"""
+	__metaclass__ = abc.ABCMeta
+
 	diffusion = 0.
 	decay = 0.
+	initial = 0.
 
 
 class Agent(object) :
-	sensors = {}
-	actuators = {}
+	"""Agent base class.
+
+	Agent instances have the attributes pos, state, and reservoir.
+	Pos is a (real) vector within the bounds of Space, state an internal
+	state (see below), and reservoir a vector of chemical species with
+	the same order as Space.chemicals.
+
+	Agents implement a finite state machine. Agent subclasses should define
+	the attribute states as a sequence of state markers (usually strings or
+	ints). Agent subclasses are required to implement the attribute clock,
+	that determines the speed of state transitions.
+	
+	Agents interact with the environment by means of sensors and actuators.
+	To define interactions, subclasses should define the attributes sensors
+	and actuators as dictionaries of name/Sensor or name/Actuator pairs.
+
+	The finite state machine transition matrix can be defined through the
+	attribute transitions. This attribute has to be a dictionary whose keys
+	are a tuple of internal states (first item) and combinations of sensor
+	names. If a sensor name is prefixed with the character '^', the truth
+	value of the sensor is inverted in this transition. The transition matrix
+	has to define exactly one entry for each combination of internal states
+	and sensor values.
+	
+	Agent subclasses can define the movement attributes displacement and
+	ascent. Displacement is a positive number defining the amplitude in a
+	Brownian random walk. Ascent is a dictionary of Chemical/real pairs
+	that define the speed of the agent relative to the gradient of the
+	respective Chemical in the environment.
+	
+	Agent subclasses can induce chemical reactions and/or exchange material
+	with the environment. Agent.reactions and Agent.exchange are functions
+	that return sequences (ideally numpy.arrays) of reaction/exchange rates,
+	in the same order as Space.chemicals.
+	"""
+	__metaclass__ = abc.ABCMeta
+
+	@abc.abstractproperty
+	def clock(self) :
+		"""Clock cycle of the internal state machine."""
+		return None
+
+	@property
+	def states(self) :
+		"Sequence of internal states."
+		return (0,)
+
+	@property
+	def sensors(self) :
+		"Dictionary of name/Sensor pairs."
+		return {}
+
+	@property
+	def actuators(self) :
+		"Dictionary of name/Actuator pairs."
+		return {}
+
 	transitions = {}
 	
-	reaction = lambda agent, conc : 0
+	@property
+	def displacement(self) :
+		"Random walk amplitude."
+		return 0
 
-	displacement = 0
+	@property
+	def ascent(self) :
+		"Dictionary of Chemical/velocity pairs for gradient ascent."
+		return {}
 
-	def __init__(self, pos) :
+	def reaction(self, conc) :
+		"Returns reaction rates for Space.chemicals."
+		return 0
+		
+	def exchange(self, conc) :
+		"Returns exchange rates from Space.chemicals to Agent.reservoir."
+		return 0
+
+	@classmethod
+	def actuated(cls, actuator, true_val, false_val) :
+		"""Agent actuations.
+		
+		Agent.actuated returns an Actuation object that evaluates to
+		true_val if the agent.actuator with the name actuator is True
+		in the current context, otherwise it evaluates to false_val.
+		Example:
+		
+		class Agent(api.Agent) :
+			displacement = Agent.actuated('moving', 1, 0)
+		"""
+		def when_active(agent) :
+			active = agent.state in agent.actuators[actuator].active
+			return true_val if active else false_val
+		when_active.__doc__ = "%s if '%s' else %s" % (true_val, actuator, false_val)
+		return property(when_active)
+
+	def __init__(self, d, pos) :
 		self.state = self.states[0]
 		self.pos = pos
+
+		self.reservoir = np.array(d*[0.])
 
 		self.transitions = {
 			(inp[0], tuple(s in inp[1:] for s in self.sensors)) : out
@@ -137,25 +262,38 @@ class Agent(object) :
 		}
 
 
-	@classmethod
-	def when_active(cls, actuator, true_val, false_val) :
-		def when_active(agent) :
-			return true_val if agent.is_active(actuator) else false_val
-		when_active.__doc__ = "%s if '%s' else %s" % (true_val, actuator, false_val)
-		return property(when_active)
-
-	def is_active(self, actuator) :
-		return self.state in self.actuators[actuator].active
-
-
 class Sensor(object) :
+	"""Agent environment sensor.
+	
+	To be used as values of the Agent.sensors dictionary.
+	Sensor(Chemical, threshold) returns a sensor that evaluates to True
+	if the concentration of Chemical at the position agent.pos exceeds the
+	threshold value, otherwise it evaluates to False.
+	"""
 	def __init__(self, chemical, threshold) :
 		self.chemical = chemical
 		self.threshold = threshold
 		self.value = False
 
 
+class ReservoirSensor(Sensor) :
+	"""Agent reservoir sensor.
+	
+	To be used as values of the Agent.sensors dictionary.
+	ReservoirSensor(Chemical, threshold) returns a sensor that evaluates
+	to True if the concentration of Chemical in agent.reservoir exceeds the
+	threshold value, otherwise it evaluates to False.
+	"""
+	pass
+
+
 class Actuator(object) :
-	def __init__(self, active) :
+	"""Actuator object.
+	
+	Maps a sequence of internal states onto an Actuation.
+	Actuations can be used in the mathod Agent.actuated in order to
+	determine some Agent properties from the internal Agent state."""
+	def __init__(self, *active) :
+		"active has to be a sequence and subset of Agent.states."
 		self.active = active
 

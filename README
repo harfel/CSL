@@ -1,24 +1,18 @@
+This is a simulator for the Chemical Swarm Language (v1.0)
 
-the code is advanced enough for a
-little preview. it requires python2.7, scipy and mathplotlib. installing
-prerequisites shuld be straight forward using pip or easyinstall.
+The program requires python2.7, numpy, and matplotlib.
+Example programs are distributed in the example directory.
+To run any of them type
 
-to start the example, run
+$ cd examples ; python ../simulator.py NAME
 
-$ python simulator.py example
+where NAME is the filename without the trailing .py suffix.
 
-to stop it, you will have to fire ctrl-c in the terminal two or more
-times. here's a quick explanation of the files:
+To stop simulation, one currently has to fire a kill signal (possibly several
+times).
 
 simulator.py -- mainly does initialization and graphics
-api.py -- contains all the logic
-example.py -- is the configuration file that sets up the system
-(currently the flocking via sensitive docking example that I presented
-in venice).
+api.py       -- contains all the logic
+example      -- a folder with configuration files for several algorithms
 
-there are a couple of things missing in the simulator, mainly active
-gradient ascent, material uptake/release, and sensible (neumann)
-boundary conditions, and documentation :-(
-
-Harold - Sept 27 2013
 
